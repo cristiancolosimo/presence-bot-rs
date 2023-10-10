@@ -1,0 +1,10 @@
+target
+.gitignore
+.git
+presencebot.db
+run.sh
+run.sh.template
+.env
+.env.template
+Dockerfile
+docker-compose.yml

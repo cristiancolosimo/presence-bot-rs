@@ -1,0 +1,9 @@
+version: '3'
+
+services:
+  bot-telegram:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./presencebot.db:/app/presencebot.db
