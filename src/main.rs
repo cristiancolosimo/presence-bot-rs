@@ -208,10 +208,14 @@ async fn fetching_state_loop(pool: &Pool<DbConnectionType>) {
                 log::info!("Sending message to user: {:?}", user);
 
                 let user_id = user.telegram_id as i64;
-                bot.send_message(ChatId(user_id), &message)
-                    .send()
-                    .await
-                    .unwrap();
+                match bot.send_message(ChatId(user_id), &message).send().await {
+                    Ok(_) => {
+                        log::info!("Message sent to user: {:?}", user);
+                    }
+                    Err(err) => {
+                        log::error!("Error sending message to user: {:?} , {:?}", user, err);
+                    }
+                }
             }
         }
         Err(_) => {
