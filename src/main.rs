@@ -7,9 +7,12 @@ type DbConnectionType = Sqlite;
 type DbPool = SqlitePool;
 #[derive(Debug, Deserialize, sqlx::FromRow)]
 struct User {
+    #[allow(dead_code)]
     id: i32,
-    telegram_id: i32,
+    telegram_id: i64,
 }
+
+
 
 impl User {
     async fn insert_user_db(
@@ -27,8 +30,25 @@ impl User {
         }
         return Ok(());
     }
-    async fn select_all_user_db(pool: &Pool<DbConnectionType>) -> Result<Vec<User>, sqlx::Error> {
+    async fn select_all(pool: &Pool<DbConnectionType>) -> Result<Vec<User>, sqlx::Error> {
         return sqlx::query_as::<DbConnectionType, User>("SELECT * FROM users")
+            .fetch_all(pool)
+            .await;
+    }
+}
+
+
+#[derive(Debug, Deserialize, sqlx::FromRow)]
+struct Group {
+    #[allow(dead_code)]
+    id: i32,
+    telegram_id: i64,
+    #[allow(dead_code)]
+    disabled: bool,
+}
+impl Group {
+    async fn select_all_enabled(pool: &Pool<DbConnectionType>) -> Result<Vec<Group>, sqlx::Error> {
+        return sqlx::query_as::<DbConnectionType, Group>("SELECT * FROM groups WHERE disabled = 0")
             .fetch_all(pool)
             .await;
     }
@@ -36,8 +56,10 @@ impl User {
 
 #[derive(Debug, Deserialize, sqlx::FromRow)]
 struct Log {
+    #[allow(dead_code)]
     id: i32,
     status: bool,
+    #[allow(dead_code)]
     timestamp: String,
 }
 
@@ -91,6 +113,12 @@ async fn get_db() -> Pool<DbConnectionType> {
         telegram_id INTEGER,
         UNIQUE(telegram_id)
         );
+    CREATE TABLE IF NOT EXISTS groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER,
+        disabled bool DEFAULT 0,
+        UNIQUE(telegram_id)
+    );
     ",
     )
     .execute(&pool)
@@ -129,6 +157,7 @@ fn generate_response(status: bool, name: Option<String>) -> String {
 #[derive(Debug, Deserialize)]
 struct LabState {
     id: u8,
+    #[allow(dead_code)]
     description: String,
 }
 #[derive(Debug, Deserialize)]
@@ -156,15 +185,18 @@ async fn fetch_history() -> Option<String> {
     }
     let first_user = first_user.unwrap();
     let env_time_offset = std::env::var("CHRONO_TIME_OFFSET");
-    let time_offset = env_time_offset.unwrap_or(String::from("+02:00")); //Z = UTF, +02:00 italy,ecc
+    let time_offset = env_time_offset.unwrap_or(String::from("+01:00")); //Z = UTF, +01:00 italy,ecc
     let time = format!("{}{}", first_user.time, time_offset);
     let time_parsed = DateTime::parse_from_rfc3339(&time);
     if time_parsed.is_err() {
         log::error!("Error parsing time: {:?} , {}", time_parsed, time);
         return None;
     }
-    let time_parsed = time_parsed.unwrap();
+    let time_parsed: DateTime<chrono::FixedOffset> = time_parsed.unwrap();
     let current_time = chrono::Local::now();
+    log::info!("Time: {} Offset env:{}", time, time_offset);
+    log::info!("Current time: {}",current_time);
+
     let time_diff = current_time
         .signed_duration_since(time_parsed)
         .num_seconds();
@@ -201,8 +233,9 @@ async fn fetching_state_loop(pool: &Pool<DbConnectionType>) {
             let history_user_name = fetch_history().await;
             let message: String = generate_response(current_state_lab_id, history_user_name);
 
-            let users = User::select_all_user_db(pool).await.unwrap();
-            let bot = Bot::from_env();
+            let users = User::select_all(pool).await.unwrap();
+            let bot: Bot = Bot::from_env();
+
 
             for user in users.iter() {
                 log::info!("Sending message to user: {:?}", user);
@@ -214,6 +247,20 @@ async fn fetching_state_loop(pool: &Pool<DbConnectionType>) {
                     }
                     Err(err) => {
                         log::error!("Error sending message to user: {:?} , {:?}", user, err);
+                    }
+                }
+            }
+            let groups = Group::select_all_enabled(pool).await.unwrap();
+            for group in groups.iter() {
+                log::info!("Sending message to group: {:?}", group);
+
+                let group_id = group.telegram_id as i64;
+                match bot.send_message(ChatId(group_id), &message).send().await {
+                    Ok(_) => {
+                        log::info!("Message sent to group: {:?}", group);
+                    }
+                    Err(err) => {
+                        log::error!("Error sending message to group: {:?} , {:?}", group, err);
                     }
                 }
             }
@@ -250,6 +297,7 @@ async fn main() {
             fetching_state_loop(&pool_loop).await;
         }
     });
+
     //Loop telegram bot
     teloxide::repl(bot, move |bot: Bot, msg: Message| {
         loop_telegram(bot, msg, pool_telegram.clone())
@@ -274,11 +322,14 @@ async fn loop_telegram(bot: Bot, msg: Message, db: Pool<DbConnectionType>) -> Re
         Ok(()) =>  "Ciao, sono il bot HLCS 🦀. Ti avviserò quando il laboratorio sarà aperto o chiuso",
         Err(()) =>  "Ciao, sono il bot HLCS 🦀. Ti avviserò quando il laboratorio sarà aperto o chiuso, ti avverto che eri già iscritto"
     };
-    bot.send_message(msg.chat.id, messaggio_benvenuto).await?;
+    if msg.chat.is_private() {
+        bot.send_message(msg.chat.id, messaggio_benvenuto).await?;
 
-    if message_status.is_some() {
-        bot.send_message(msg.chat.id, message_status.unwrap())
-            .await?;
+        if message_status.is_some() {
+            bot.send_message(msg.chat.id, message_status.unwrap())
+                .await?;
+        }
     }
+
     Ok(())
 }

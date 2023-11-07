@@ -8,3 +8,4 @@ run.sh.template
 .env.template
 Dockerfile
 docker-compose.yml
+*.db
