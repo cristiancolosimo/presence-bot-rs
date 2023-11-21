@@ -177,7 +177,7 @@ async fn fetch_history() -> Option<String> {
         return None;
     }
     let val = current_state_lab_raw.unwrap();
-    let parsed_resp: Vec<UserHistoryFetch> = val.json::<Vec<UserHistoryFetch>>().await.unwrap();
+    let parsed_resp: Vec<UserHistoryFetch> = val.json::<Vec<UserHistoryFetch>>().await.unwrap_or(Vec::new());
 
     let first_user = parsed_resp.first();
     if first_user.is_none() {
@@ -212,7 +212,13 @@ async fn fetching_state_loop(pool: &Pool<DbConnectionType>) {
     let current_state_lab_raw = reqwest::get(get_lab_state_endpoint).await;
     let mut current_state_lab_id: bool = false;
     if let Ok(data) = current_state_lab_raw {
-        let current_state_lab: LabState = data.json().await.unwrap();
+        let current_state_lab: LabState = match data.json().await{
+            Ok(data) => data,
+            Err(err) => {
+                log::error!("Error parsing json: {:?}", err);
+                return;
+            }
+        };
         log::info!("Current state 1: {:?}", current_state_lab);
         current_state_lab_id = current_state_lab.id == 1; //Casting int to bool
     }
